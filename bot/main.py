@@ -408,14 +408,22 @@ async def process_readiness(callback: CallbackQuery, state: FSMContext):
         )
         await state.set_state(Form.bot_constructor)
     elif user_response == "examples":
-        # Показываем первую страницу
-        current_link = examples_data[0]["link"]  # Пример доступа
-        keyboard = examples_kb(examples_data, 0)  # Передаем данные
-        await callback.message.edit_text(
-            f"Пример бота:\n{current_link}",
-            reply_markup=keyboard
-        )
-        await state.set_state(Form.examples_show)
+        # Показываем первый пример с полным описанием
+        if examples_data:  # Проверяем, что есть примеры
+            example = examples_data[0]  # Берем первый пример
+            await callback.message.edit_text(
+                f"Пример бота:\n\n"
+                f"Имя: {example['name']}\n"
+                f"Описание: {example['description']}\n"
+                f"Ссылка: {example['link']}",
+                reply_markup=examples_kb(examples_data, 0)  # Передаем данные и индекс
+            )
+            await state.set_state(Form.examples_show)
+        else:
+            await callback.message.edit_text(
+                "Примеры ботов пока отсутствуют.",
+                reply_markup=InlineKeyboardBuilder().button(text="🔙 Назад в меню", callback_data="back_to_readiness").as_markup()
+            )
     elif user_response == "maybe":
         await callback.message.edit_text(
             "Так как все возможности ботов описать просто невозможно, укажите свое видение, и администратор свяжется с вами для уточнения деталей.",
