@@ -856,6 +856,36 @@ async def select_features(callback: CallbackQuery, state: FSMContext):
             reply_markup=bot_constructor_kb()
         )
 
+@dp.message(Command("del"))
+async def delete_example_start(message: Message, state: FSMContext):
+    if message.from_user.id == ADMIN_ID:  # Проверяем, что это админ
+        await message.answer("Введите название бота, который нужно удалить:")
+        await state.set_state(Form.delete_example)
+
+@dp.message(Form.delete_example)
+async def delete_example_by_name(message: Message, state: FSMContext):
+    global examples_data
+    
+    # Получаем название бота из сообщения
+    bot_name = message.text.strip()
+    
+    # Ищем бота по названию
+    found = False
+    for example in examples_data:
+        if example["name"].lower() == bot_name.lower():
+            examples_data.remove(example)
+            found = True
+            break
+    
+    if found:
+        # Сохраняем обновленные данные
+        save_examples(examples_data)
+        await message.answer(f"Пример бота '{bot_name}' успешно удален!")
+    else:
+        await message.answer(f"Пример бота с названием '{bot_name}' не найден.")
+    
+    await state.clear()
+
 # Запись на консультацию
 @dp.callback_query(Form.consultation_time)
 async def select_consultation_time(callback: CallbackQuery, state: FSMContext):
