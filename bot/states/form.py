@@ -8,7 +8,7 @@ class AddExample(StatesGroup):
 class Form(StatesGroup):
     # Основной опрос
     business_niche = State()        # Выбор ниши бизнеса
-
+    delete_example = State()
     start = State()              # Начальное состояние
     learn_more = State()         # Состояние "Узнать больше"
     business_subniche = State()     # Выбор подкатегории
