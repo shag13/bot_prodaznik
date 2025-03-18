@@ -3,9 +3,10 @@ import json
 from pathlib import Path
 import re
 import os
+import asyncio
 from keyboards.inline import BOT_EXAMPLES
 from datetime import datetime, timedelta
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher, types, BaseMiddleware
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -32,6 +33,15 @@ logging.basicConfig(
     level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
+
+# Middleware для отслеживания активности
+class ActivityMiddleware(BaseMiddleware):
+    async def __call__(self, handler, event, data):
+        user = data.get('event_from_user')
+        if user:
+            user_id = user.id
+            users_data.setdefault(user_id, {})['last_active'] = datetime.now()
+        return await handler(event, data)
 
 class AddExample(StatesGroup):
     name = State()        # Имя бота
@@ -73,6 +83,7 @@ bot = Bot(token=Config.BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
+dp.update.middleware(ActivityMiddleware())
 # Временное хранилище данных
 users_data = {}
 verification_codes = {}
@@ -203,6 +214,83 @@ async def start_main_handler(callback: CallbackQuery, state: FSMContext):
         reply_markup=main_menu_kb()
     )
     await state.set_state(Form.business_niche)
+
+
+
+# Функция для проверки неактивных пользователей
+async def check_inactive_users():
+    while True:
+        await asyncio.sleep(60)
+        now = datetime.now()
+        for user_id in list(users_data.keys()):
+            data = users_data.get(user_id, {})
+            last_active = data.get('last_active')
+            if not last_active:
+                continue
+            
+            inactive_time = now - last_active
+            reminders_sent = data.get('reminders_sent', 0)
+            
+            if inactive_time >= timedelta(minutes=5) and reminders_sent == 0:
+                try:
+                    state = await dp.storage.get_state(user_id)
+                    data['saved_state'] = state
+                    builder = InlineKeyboardBuilder()
+                    builder.button(text="Продолжить", callback_data="resume_interaction")
+                    await bot.send_message(user_id, "Прошло 5 минут, а я все жду, когда ты вернешься ко мне, чтобы собрать своего собственного бота!", reply_markup=builder.as_markup())
+                    data['reminders_sent'] = 1
+                except Exception as e:
+                    logging.error(f"Reminder error: {e}")
+            
+            elif inactive_time >= timedelta(hours=1) and reminders_sent == 1:
+                try:
+                    builder = InlineKeyboardBuilder()
+                    builder.button(text="Продолжить", callback_data="resume_interaction")
+                    await bot.send_message(user_id, "Прошел уже час... а я все еще жду... Жду, когда ты вернешься ко мне, чтобы собрать своего собственного бота!", reply_markup=builder.as_markup())
+                    data['reminders_sent'] = 2
+                except Exception as e:
+                    logging.error(f"Reminder error: {e}")
+
+# Обработчик для кнопки "Продолжить"
+@dp.callback_query(lambda c: c.data == "resume_interaction")
+async def handle_resume(callback: CallbackQuery, state: FSMContext):
+    user_id = callback.from_user.id
+    data = users_data.get(user_id, {})
+    saved_state = data.get('saved_state')
+    
+    if saved_state:
+        await state.set_state(saved_state)
+        data['reminders_sent'] = 0
+        del data['saved_state']
+        
+        current_state = await state.get_state()
+        
+        if current_state == Form.business_niche.state:
+            await callback.message.answer("Выберите нишу вашего бизнеса:", reply_markup=main_menu_kb())
+        elif current_state == Form.goals.state:
+            await callback.message.answer("🎯 Выберите главную задачу:", reply_markup=goals_kb())
+        elif current_state == Form.current_situation.state:
+            await callback.message.answer("🔄 Как вы справляетесь сейчас?", reply_markup=current_situation_kb())
+        elif current_state == Form.budget.state:
+            await callback.message.answer("💰 Ваш бюджет?", reply_markup=budget_kb())
+        elif current_state == Form.timeline.state:
+            await callback.message.answer("⏳ Когда планируете начать?", reply_markup=timeline_kb())
+        elif current_state == Form.readiness.state:
+            await callback.message.answer("Готовы обсудить детали?", reply_markup=readiness_kb())
+        else:
+            await callback.message.answer("Давайте продолжим!")
+    else:
+        await callback.message.answer("Начнем сначала! Выберите нишу:", reply_markup=main_menu_kb())
+        await state.set_state(Form.business_niche)
+    
+    await callback.answer()
+
+# Запуск задачи проверки неактивных пользователей
+async def on_startup():
+    asyncio.create_task(check_inactive_users())
+
+# Регистрация задачи при запуске бота
+dp.startup.register(on_startup)
 
 # Основной опрос
 @dp.callback_query(Form.business_niche)
@@ -477,7 +565,7 @@ async def process_user_vision(message: Message, state: FSMContext):
     await state.clear()
 
 @dp.callback_query(Form.bot_constructor)
-async def process_bot_constructor(callback: CallbackQuery, state: FSMContext):
+async def process_bot_constructor(callback: types.CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
     data = callback.data
     
@@ -486,25 +574,10 @@ async def process_bot_constructor(callback: CallbackQuery, state: FSMContext):
         user_data = users_data.get(user_id, {})
         selected_features = user_data.get('selected_features', [])
         
-        # Формируем сообщение для администратора
-        admin_message = (
-            "Новая заявка!\n"
-            f"Пользователь: {callback.from_user.full_name} (@{callback.from_user.username})\n"
-            f"Выбранные функции: {', '.join(selected_features)}"
-        )
+        # Запрашиваем номер телефона
+        await callback.message.answer("Пожалуйста, введите ваш номер телефона для связи:")
+        await state.set_state(Form.user_phone_input)
         
-        # Отправляем уведомление администратору
-        await bot.send_message(
-            chat_id=Config.ADMIN_ID,
-            text=admin_message
-        )
-        
-        # Завершаем диалог
-        await callback.message.answer(
-            "Спасибо! Ваша заявка отправлена. Мы свяжемся с вами в ближайшее время.",
-            reply_markup=None  # Убираем клавиатуру
-        )
-        await state.clear()
     elif data == "back_to_readiness":
         # Возвращаемся к вопросу о готовности
         await callback.message.edit_text(
@@ -533,17 +606,16 @@ async def process_bot_constructor(callback: CallbackQuery, state: FSMContext):
             reply_markup=bot_constructor_kb(user_data['selected_features'])
         )
         
-# Примеры ботов
-# Обработчик для раздела "Нужны примеры"
-@dp.callback_query(Form.readiness, lambda c: c.data == "readiness_examples")
-async def show_examples(callback: CallbackQuery, state: FSMContext):
-    if examples_data:
+@dp.callback_query(lambda c: c.data == "readiness_examples")
+async def show_examples(callback: types.CallbackQuery, state: FSMContext):
+    if examples_data:  # Проверяем, что есть примеры
+        example = examples_data[0]  # Берем первый пример
         await callback.message.edit_text(
             f"Пример бота:\n\n"
-            f"Имя: {examples_data[0]['name']}\n"
-            f"Описание: {examples_data[0]['description']}\n"
-            f"Ссылка: {examples_data[0]['link']}",
-            reply_markup=examples_kb(examples_data, 0)  # Добавляем examples_data
+            f"Имя: {example['name']}\n"
+            f"Описание: {example['description']}\n"
+            f"Ссылка: {example['link']}",
+            reply_markup=examples_kb(examples_data, 0)  # Передаем данные и индекс
         )
         await state.set_state(Form.examples_show)
     else:
@@ -553,26 +625,25 @@ async def show_examples(callback: CallbackQuery, state: FSMContext):
         )
 
 @dp.callback_query(lambda c: c.data == "demo_start")
-async def start_demo(callback: CallbackQuery, state: FSMContext):
+async def start_demo(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
         "Выберите тип демо-режима:",
         reply_markup=demo_types_kb()
     )
     await state.set_state(Form.demo_type_selection)
 
-# В обработчике handle_examples (main.py)
 @dp.callback_query(lambda c: c.data.startswith("example_"))
-async def handle_examples(callback: CallbackQuery, state: FSMContext):
+async def handle_examples(callback: types.CallbackQuery, state: FSMContext):
     action, *data = callback.data.split("_")
     example_index = int(data[-1])  # Получаем индекс из callback.data
-    
+
     # Проверяем границы индекса
     if example_index < 0 or example_index >= len(examples_data):
         example_index = 0
-    
+
     # Получаем пример
     example = examples_data[example_index]
-    
+
     # Обновляем сообщение
     await callback.message.edit_text(
         f"Пример бота:\n\n"
@@ -732,11 +803,31 @@ async def process_user_name(message: Message, state: FSMContext):
     await state.set_state(Form.user_phone_input)
 
 @dp.message(Form.user_phone_input)
-async def process_user_phone(message: Message, state: FSMContext):
+async def process_user_phone(message: types.Message, state: FSMContext):
     if validate_phone(message.text):
         await state.update_data(user_phone=message.text)
-        await message.answer("Теперь введите ваш email:")
-        await state.set_state(Form.user_email_input)
+        
+        # Формируем сообщение для администратора
+        user_data = await state.get_data()
+        admin_message = (
+            "Новая заявка!\n"
+            f"Пользователь: {message.from_user.full_name} (@{message.from_user.username})\n"
+            f"Телефон: {user_data['user_phone']}\n"
+            f"Выбранные функции: {', '.join(user_data.get('selected_features', []))}"
+        )
+        
+        # Отправляем уведомление администратору
+        await bot.send_message(
+            chat_id=Config.ADMIN_ID,
+            text=admin_message
+        )
+        
+        # Завершаем диалог
+        await message.answer(
+            "Спасибо! Ваша заявка отправлена. Мы свяжемся с вами в ближайшее время.",
+            reply_markup=InlineKeyboardBuilder().button(text="Нужны примеры", callback_data="readiness_examples").as_markup()
+        )
+        await state.clear()
     else:
         await message.answer("Некорректный номер телефона. Попробуйте еще раз.")
 
