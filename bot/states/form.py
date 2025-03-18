@@ -8,7 +8,7 @@ class AddExample(StatesGroup):
 class Form(StatesGroup):
     # Основной опрос
     business_niche = State()        # Выбор ниши бизнеса
-    delete_example = State()
+
     start = State()              # Начальное состояние
     learn_more = State()         # Состояние "Узнать больше"
     business_subniche = State()     # Выбор подкатегории
@@ -17,9 +17,9 @@ class Form(StatesGroup):
     budget = State()                # Бюджет
     timeline = State()              # Сроки
     readiness = State()             # Готовность к действию
-
+    delete_example = State()
     bot_constructor = State()
-
+    user_phone_input = State()
     # Подтверждение боли и предложение примеров
     examples_offer = State()  # Предложение посмотреть примеры
 
