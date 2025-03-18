@@ -203,17 +203,17 @@ def examples_offer_kb():
 # Исправленная функция (inline.py)
 def examples_kb(examples_data: list, example_index: int):
     builder = InlineKeyboardBuilder()
-    
+
     # Кнопки для пагинации
     if example_index > 0:
         builder.button(text="⬅️ Назад", callback_data=f"example_back_{example_index - 1}")
     if example_index < len(examples_data) - 1:
         builder.button(text="Далее ➡️", callback_data=f"example_next_{example_index + 1}")
-    
+
     # Остальные кнопки
     builder.button(text="🎮 Демо-режим", callback_data="demo_start")
     builder.button(text="🔙 Назад в меню", callback_data="back_to_readiness")
-    
+
     builder.adjust(1)
     return builder.as_markup()
 
@@ -368,4 +368,9 @@ def readiness_kb():
     builder.button(text="👀 Нужны примеры", callback_data="readiness_examples")
     builder.button(text="🤔 Рассматриваю варианты", callback_data="readiness_maybe")
     builder.adjust(1)  # Одна кнопка в строке
+    return builder.as_markup()
+
+def after_submit_kb():
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Нужны примеры", callback_data="readiness_examples")
     return builder.as_markup()
